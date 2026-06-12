@@ -1,0 +1,38 @@
+# Model weights (download via HuggingFace)
+models/*/
+!models/.gitkeep
+
+# CLIP feature cache
+clip_cache/*/
+!clip_cache/.gitkeep
+
+# Training / fine-tuning outputs
+train_runs/
+finetune_runs/
+
+# Inference & evaluation outputs
+outputs/*/
+!outputs/.gitkeep
+Inference_Result/
+evaluate/
+
+# Dataset (not included — see README for download instructions)
+Dataset/
+data/*/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.cursor/
+.vscode/
+.idea/

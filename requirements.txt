@@ -1,0 +1,23 @@
+# PyTorch (CUDA 12.8)
+torch==2.9.1+cu128
+torchvision==0.24.1+cu128
+
+# HuggingFace
+transformers==5.0.0.dev0
+accelerate==1.12.0
+safetensors==0.7.0
+
+# Vision / Augmentation
+albumentations==2.0.8
+opencv-python==4.12.0.88
+pillow==11.0.0
+
+# Numerical / Plotting
+numpy==2.1.2
+scipy==1.16.1
+matplotlib==3.10.5
+pandas==2.3.2
+
+# Training utilities
+tensorboard==2.20.0
+tqdm==4.67.1
