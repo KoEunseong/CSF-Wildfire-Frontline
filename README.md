@@ -45,9 +45,8 @@ Dataset/
 │       ├── raw/
 │       └── gt/
 └── real/           # Real UAV imagery
-    └── real_data/
-        ├── raw/
-        └── gt/
+    ├── raw/
+    └── gt/
 ```
 
 ---
@@ -93,12 +92,12 @@ Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`
 ```bash
 # CLIP-Heat (default — 4ch model + CLIP heatmap)
 python inference.py \
-    --data-root ./Dataset/real/real_data \
+    --data-root ./Dataset/real/test \
     --model-path ./train_runs/<run_id>/best_fireline_model.pth
 
 # Baseline (RGB only — standard 3ch model)
 python inference.py --no-clip \
-    --data-root ./Dataset/real/real_data \
+    --data-root ./Dataset/real/test \
     --model-path ./train_runs/<run_id>/best_fireline_model.pth
 ```
 
@@ -114,7 +113,7 @@ Results are saved to `./Inference_Result/Run_<timestamp>/`.
 ```bash
 python evaluate.py \
     --pred-dir ./Inference_Result/Run_<timestamp>/pred_masks \
-    --gt-dir ./Dataset/real/real_data/gt
+    --gt-dir ./Dataset/real/test/gt
 ```
 
 Metrics: IoU, Dice, Precision, Recall, F1, Chamfer, HD95, TolF1.
