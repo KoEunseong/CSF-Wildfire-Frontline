@@ -9,9 +9,8 @@ Architecture: **CLIP-Heat + SegFormer** — a 4-channel input SegFormer that fus
 
 | Script | Architecture | Input |
 |---|---|---|
-| `train_clipheat_in4.py` | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
+| `train_clipheat.py` | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
 | `train_baseline.py` | SegFormer 3ch | RGB only |
-| `finetune_clipheat_in4.py` | Fine-tune on real images | RGB + CLIP heatmap |
 | `comparison_experiments/train_deeplabv3plus.py` | DeepLabV3+ | RGB only |
 
 ---
@@ -74,8 +73,8 @@ models/
 ## Training
 
 ```bash
-# CLIP-Heat In4 (main model)
-python train_clipheat_in4.py \
+# CLIP-Heat (main model)
+python train_clipheat.py \
     --data-root ./Dataset/sim \
     --model-name nvidia/mit-b3 \
     --clip-model openai/clip-vit-base-patch32
@@ -84,11 +83,6 @@ python train_clipheat_in4.py \
 python train_baseline.py \
     --data-root ./Dataset/sim \
     --model-name nvidia/mit-b1
-
-# Fine-tune on real images
-python finetune_clipheat_in4.py \
-    --pretrained-path ./train_runs/<run_id>/best_model.pth \
-    --data-root ./Dataset/real/real_data
 ```
 
 Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`.
@@ -103,15 +97,10 @@ python inference.py \
     --data-root ./Dataset/real/real_data \
     --model-path ./train_runs/<run_id>/best_model.pth
 
-# CLIP-Heat In4
-python inference_clipheat_in4.py \
+# CLIP-Heat
+python inference_clipheat.py \
     --data-root ./Dataset/real/real_data \
     --model-path ./train_runs/<run_id>/best_model.pth
-
-# After fine-tuning
-python inference_finetune.py \
-    --model-path ./finetune_runs/<run_id>/best_model.pth \
-    --data-root ./Dataset/real/real_data
 ```
 
 Results are saved to `./outputs/Run_<timestamp>/`.
@@ -145,12 +134,10 @@ python overlay.py \
 
 ```
 frontline_model_public/
-├── train_clipheat_in4.py
+├── train_clipheat.py
 ├── train_baseline.py
-├── finetune_clipheat_in4.py
 ├── inference.py
-├── inference_clipheat_in4.py
-├── inference_finetune.py
+├── inference_clipheat.py
 ├── evaluate.py
 ├── overlay.py
 ├── comparison_experiments/
