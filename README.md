@@ -129,7 +129,7 @@ python inference.py --no-clip \
 If `train_meta.json` is found next to the checkpoint and contains `"use_clip": false`,  
 `--no-clip` is inferred automatically.
 
-Results are saved to `./outputs/Run_<timestamp>/`.
+Results are saved to `./Inference_Result/Run_<timestamp>/`.
 
 ---
 
@@ -137,7 +137,7 @@ Results are saved to `./outputs/Run_<timestamp>/`.
 
 ```bash
 python evaluate.py \
-    --pred-dir ./outputs/Run_<timestamp>/pred_masks \
+    --pred-dir ./Inference_Result/Run_<timestamp>/pred_masks \
     --gt-dir ./Dataset/real/gt
 ```
 
