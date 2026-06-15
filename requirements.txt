@@ -6,6 +6,7 @@ torchvision==0.24.1+cu128
 transformers==5.0.0.dev0
 accelerate==1.12.0
 safetensors==0.7.0
+huggingface_hub==1.19.0
 
 # Vision / Augmentation
 albumentations==2.0.8
