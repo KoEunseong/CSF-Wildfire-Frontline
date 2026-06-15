@@ -40,14 +40,9 @@ The dataset is available on HuggingFace:
 
 **Download:**
 
-```bash
-# Option 1: HuggingFace CLI
-huggingface-cli download EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset \
-    --repo-type dataset \
-    --local-dir ./Dataset
-
-# Option 2: Python
+```python
 from huggingface_hub import snapshot_download
+
 snapshot_download(
     repo_id="EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset",
     repo_type="dataset",
