@@ -10,7 +10,6 @@ Architecture: **CLIP-Heat + SegFormer** — a 4-channel input SegFormer that fus
 | Script | Architecture | Input |
 |---|---|---|
 | `train_clipheat_in4.py` | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
-| `train_clipheat_adapter.py` | SegFormer + 1×1 adapter | RGB + CLIP heatmap → 3ch |
 | `train_baseline.py` | SegFormer 3ch | RGB only |
 | `finetune_clipheat_in4.py` | Fine-tune on real images | RGB + CLIP heatmap |
 | `comparison_experiments/train_deeplabv3plus.py` | DeepLabV3+ | RGB only |
@@ -81,11 +80,6 @@ python train_clipheat_in4.py \
     --model-name nvidia/mit-b3 \
     --clip-model openai/clip-vit-base-patch32
 
-# Adapter variant
-python train_clipheat_adapter.py \
-    --data-root ./Dataset/sim \
-    --model-name nvidia/mit-b3
-
 # Baseline (RGB only)
 python train_baseline.py \
     --data-root ./Dataset/sim \
@@ -111,11 +105,6 @@ python inference.py \
 
 # CLIP-Heat In4
 python inference_clipheat_in4.py \
-    --data-root ./Dataset/real/real_data \
-    --model-path ./train_runs/<run_id>/best_model.pth
-
-# CLIP-Heat Adapter
-python inference_clipheat_adapter.py \
     --data-root ./Dataset/real/real_data \
     --model-path ./train_runs/<run_id>/best_model.pth
 
@@ -157,12 +146,10 @@ python overlay.py \
 ```
 frontline_model_public/
 ├── train_clipheat_in4.py
-├── train_clipheat_adapter.py
 ├── train_baseline.py
 ├── finetune_clipheat_in4.py
 ├── inference.py
 ├── inference_clipheat_in4.py
-├── inference_clipheat_adapter.py
 ├── inference_finetune.py
 ├── evaluate.py
 ├── overlay.py
