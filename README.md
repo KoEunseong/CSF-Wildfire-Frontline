@@ -1,15 +1,15 @@
-# Frontline Model — Wildfire Frontline Segmentation
+# CSF-Wildfire-Frontline
 
 Segmentation model for detecting wildfire frontlines in aerial/UAV imagery.  
 Architecture: **CLIP-Heat + SegFormer** — a 4-channel input SegFormer that fuses RGB with a CLIP-based fire-likelihood heatmap.
 
 ---
 
-## Models
+## Training Modes
 
 | Script | Mode | Architecture | Input |
 |---|---|---|---|
-| `train.py` (default) | CLIP-Heat | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
+| `train.py` (default) | CLIP-Heat | SegFormer 4ch | RGB + CLIP heatmap |
 | `train.py --no-clip` | Baseline | SegFormer 3ch | RGB only |
 
 ---
@@ -33,7 +33,29 @@ pip install -r requirements.txt
 
 ---
 
-## Dataset Structure
+## Dataset
+
+The dataset is available on HuggingFace:  
+**[EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset](https://huggingface.co/datasets/EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset)**
+
+**Download:**
+
+```bash
+# Option 1: HuggingFace CLI
+huggingface-cli download EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset \
+    --repo-type dataset \
+    --local-dir ./Dataset
+
+# Option 2: Python
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id="EUNSEONG-KO/CSF-Wildfire-Frontline-Dataset",
+    repo_type="dataset",
+    local_dir="./Dataset"
+)
+```
+
+**Expected structure after download:**
 
 ```
 Dataset/
@@ -41,6 +63,9 @@ Dataset/
 │   ├── train/
 │   │   ├── raw/    # RGB images  (e.g., Wildfire_0000_Raw.png)
 │   │   └── gt/     # GT masks    (e.g., Wildfire_0000_Line.png)
+│   ├── val/
+│   │   ├── raw/
+│   │   └── gt/
 │   └── test/
 │       ├── raw/
 │       └── gt/
@@ -92,19 +117,19 @@ Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`
 ```bash
 # CLIP-Heat (default — 4ch model + CLIP heatmap)
 python inference.py \
-    --data-root ./Dataset/real/test \
+    --data-root ./Dataset/real \
     --model-path ./train_runs/<run_id>/best_fireline_model.pth
 
 # Baseline (RGB only — standard 3ch model)
 python inference.py --no-clip \
-    --data-root ./Dataset/real/test \
+    --data-root ./Dataset/real \
     --model-path ./train_runs/<run_id>/best_fireline_model.pth
 ```
 
-If `train_meta.json` is found next to the checkpoint and contains `"use_clip": false`,
+If `train_meta.json` is found next to the checkpoint and contains `"use_clip": false`,  
 `--no-clip` is inferred automatically.
 
-Results are saved to `./Inference_Result/Run_<timestamp>/`.
+Results are saved to `./outputs/Run_<timestamp>/`.
 
 ---
 
@@ -112,8 +137,8 @@ Results are saved to `./Inference_Result/Run_<timestamp>/`.
 
 ```bash
 python evaluate.py \
-    --pred-dir ./Inference_Result/Run_<timestamp>/pred_masks \
-    --gt-dir ./Dataset/real/test/gt
+    --pred-dir ./outputs/Run_<timestamp>/pred_masks \
+    --gt-dir ./Dataset/real/gt
 ```
 
 Metrics: IoU, Dice, Precision, Recall, F1, Chamfer, HD95, TolF1.
@@ -134,11 +159,12 @@ python overlay.py \
 ## Project Structure
 
 ```
-frontline_model_public/
+CSF-Wildfire-Frontline/
 ├── train.py
 ├── inference.py
 ├── evaluate.py
 ├── overlay.py
+├── Dataset/            # Download from HuggingFace (see above)
 ├── models/             # HuggingFace model cache (not tracked)
 ├── clip_cache/         # CLIP feature cache (not tracked)
 ├── outputs/            # Inference / eval results (not tracked)
