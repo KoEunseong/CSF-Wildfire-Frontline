@@ -11,10 +11,10 @@ from datetime import datetime
 
 
 # ==========================================
-# [1] 설정
+# [1] Config
 # ==========================================
-DATA_ROOT = ""   # 구조: DATA_ROOT/raw, DATA_ROOT/gt  (--data-root 로 지정)
-MODEL_PATH = ""  # 학습된 모델 .pth 경로 (--model-path 로 지정)
+DATA_ROOT = ""   # Structure: DATA_ROOT/raw, DATA_ROOT/gt  (set via --data-root)
+MODEL_PATH = ""  # Path to trained model .pth checkpoint (set via --model-path)
 
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 SAVE_DIR = os.path.join("./Inference_Result", f"Run_{current_time}")
@@ -31,14 +31,14 @@ TOL_PX = 3
 
 IMG_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
 
-# heat 채널 정규화 옵션 (학습과 일치시키는 게 중요)
-# - "none": 그대로 0~1
+# Heat channel normalization option (must match training settings)
+# - "none": keep as-is in 0~1
 # - "center": (h-0.5)/0.5  -> [-1,1]
 HEAT_NORM_MODE = "center"
 
 
 # ==========================================
-# [2] 유틸리티: meta / local-first
+# [2] Utilities: meta / local-first
 # ==========================================
 def find_train_meta(model_path: str) -> str:
     run_dir = os.path.dirname(model_path)
@@ -102,7 +102,7 @@ def resolve_local_first(model_id: str, base_dir: str = "./models"):
 
 
 # ==========================================
-# [2.5] Metrics (HD/ASSD 포함) + TolP/TolR/TolF1
+# [2.5] Metrics (including HD/ASSD) + TolP/TolR/TolF1
 # ==========================================
 def metrics_binary(pred01: np.ndarray, gt01: np.ndarray, eps: float = 1e-6):
     pred = pred01.astype(np.uint8)
@@ -215,8 +215,8 @@ def assd(pred01: np.ndarray, gt01: np.ndarray):
 
 def tol_prf(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 1e-6):
     """
-    tolerance 기반 Precision / Recall / F1 반환
-    - tol_px=0 이면 strict(픽셀 정확히 일치) P/R/F1 반환
+    Returns tolerance-based Precision / Recall / F1
+    - If tol_px=0, returns strict (exact pixel match) P/R/F1
     """
     pred = (pred01 > 0).astype(np.uint8)
     gt = (gt01 > 0).astype(np.uint8)
@@ -229,12 +229,12 @@ def tol_prf(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 
     gt_dil = cv2.dilate((gt * 255).astype(np.uint8), k, iterations=1) > 0
     pr_dil = cv2.dilate((pred * 255).astype(np.uint8), k, iterations=1) > 0
 
-    # tol-precision: pred 픽셀이 gt_dil 안에 있으면 TP로 인정
+    # tol-precision: pred pixels inside gt_dil are counted as TP
     tp_p = np.logical_and(pred == 1, gt_dil).sum()
     fp_p = np.logical_and(pred == 1, np.logical_not(gt_dil)).sum()
     tol_prec = tp_p / (tp_p + fp_p + eps)
 
-    # tol-recall: gt 픽셀이 pr_dil 안에 있으면 TP로 인정
+    # tol-recall: gt pixels inside pr_dil are counted as TP
     tp_r = np.logical_and(gt == 1, pr_dil).sum()
     fn_r = np.logical_and(gt == 1, np.logical_not(pr_dil)).sum()
     tol_rec = tp_r / (tp_r + fn_r + eps)
@@ -248,7 +248,7 @@ def find_gt_mask_path_same_name(gt_dir: str, img_name: str) -> str:
 
 
 # ==========================================
-# [3] 전처리 / overlay
+# [3] Preprocessing / Overlay
 # ==========================================
 def preprocess_rgb_to_tensor(input_rgb_uint8: np.ndarray) -> torch.Tensor:
     x = input_rgb_uint8.astype(np.float32) / 255.0
@@ -287,8 +287,8 @@ def clip_fire_heatmap_and_grid(
 ):
     """
     Returns:
-      - heat_full: (H,W) float32 in [0,1]  (원본 해상도 기준 업샘플된 heat)
-      - norm_grid: (grid,grid) float32 in [0,1] (패치 단위 점수 정규화)
+      - heat_full: (H,W) float32 in [0,1]  (heat upsampled to original resolution)
+      - norm_grid: (grid,grid) float32 in [0,1] (per-patch score normalized)
     """
     H, W, _ = image_rgb_uint8.shape
 
@@ -337,7 +337,7 @@ def grid_cache_path(cache_dir: str, img_name: str, grid: int) -> str:
 
 
 # ==========================================
-# [5] 시각화 저장: (A) 컬러맵 오버레이 (B) 그리드 숫자
+# [5] Visualization saving: (A) colormap overlay (B) grid numbers
 # ==========================================
 def save_heat_colormap_overlay(image_rgb_uint8: np.ndarray, heat01: np.ndarray, out_path: str, alpha: float = 0.45):
     heat_u8 = np.clip(heat01 * 255.0, 0, 255).astype(np.uint8)
@@ -385,12 +385,12 @@ def save_grid_numbers_overlay(norm_grid: np.ndarray, image_rgb_uint8: np.ndarray
 
 
 # ==========================================
-# [6] 모델 (A방법): SegFormer 첫 입력 conv를 4채널로 확장
+# [6] Model (Method A): Expand SegFormer first input conv to 4 channels
 # ==========================================
 def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegmentation):
     """
-    SegFormer의 첫 입력 Conv(in_channels=3)을 in_channels=4로 교체하고,
-    pretrained RGB 가중치는 복사, heat 채널 가중치는 0으로 초기화.
+    Replace SegFormer's first input Conv (in_channels=3) with in_channels=4,
+    copy pretrained RGB weights, and initialize heat channel weights to 0.
     """
     proj = None
     try:
@@ -412,15 +412,15 @@ def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegme
             padding_mode=old.padding_mode,
         )
         with torch.no_grad():
-            new.weight[:, :3, :, :].copy_(old.weight)   # RGB 복사
-            new.weight[:, 3:4, :, :].zero_()            # heat 0 init
+            new.weight[:, :3, :, :].copy_(old.weight)   # copy RGB weights
+            new.weight[:, 3:4, :, :].zero_()            # heat channel init to 0
             if old.bias is not None:
                 new.bias.copy_(old.bias)
 
         seg_model.segformer.encoder.patch_embeddings[0].proj = new
         return seg_model
 
-    # fallback: 첫 in_channels==3 Conv 찾기
+    # fallback: find the first Conv with in_channels==3
     first_name = None
     first_conv = None
     for name, m in seg_model.segformer.named_modules():
@@ -460,7 +460,7 @@ def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegme
 
 class SegFormer4Ch(nn.Module):
     """
-    (B,4,H,W) -> SegFormer(첫 입력 conv를 4ch로 패치) -> logits
+    (B,4,H,W) -> SegFormer(first input conv patched to 4ch) -> logits
     """
     def __init__(self, seg_model_name: str, local_models_base: str = "./models"):
         super().__init__()
@@ -491,7 +491,7 @@ class SegFormer4Ch(nn.Module):
 
 class SegFormerWithInputAdapter(nn.Module):
     """
-    (B,4,H,W) -> 1x1 Conv(4->3) -> SegFormer -> logits
+    (B,4,H,W) -> 1x1 Conv(4->3) adapter -> SegFormer -> logits
     """
     def __init__(self, seg_model_name: str, local_models_base: str = "./models"):
         super().__init__()
@@ -521,7 +521,7 @@ class SegFormerWithInputAdapter(nn.Module):
 
 
 # ==========================================
-# [7] 실행 로직 (+ 평가 저장)
+# [7] Inference Logic (+ evaluation saving)
 # ==========================================
 def run_inference():
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -538,14 +538,14 @@ def run_inference():
     metrics_csv_path = os.path.join(SAVE_DIR, "metrics_per_image.csv")
     metrics_summary_path = os.path.join(SAVE_DIR, "metrics_summary.json")
 
-    print(f"📂 결과 저장 폴더: '{SAVE_DIR}'")
-    print("🚀 추론 시작!")
+    print(f"📂 Result save folder: '{SAVE_DIR}'")
+    print("🚀 Starting inference!")
 
     if not os.path.exists(MODEL_PATH):
-        print(f"❌ 모델 파일이 없습니다: {MODEL_PATH}")
+        print(f"❌ Model file not found: {MODEL_PATH}")
         return
 
-    # -------- meta 읽기 --------
+    # -------- Read meta --------
     global IMG_SIZE
     meta = load_meta_if_exists(MODEL_PATH)
 
@@ -578,7 +578,7 @@ def run_inference():
     print(f"✅ local_models_base: {local_models_base}")
     print(f"✅ THRESH={THRESH} | TOL_PX={TOL_PX} | HEAT_NORM_MODE={HEAT_NORM_MODE}")
 
-    # -------- CLIP 로드 (local-first) --------
+    # -------- Load CLIP (local-first) --------
     clip_path_or_id, clip_is_local, clip_use_safetensors, _ = resolve_local_first(
         clip_model_name, base_dir=local_models_base
     )
@@ -598,7 +598,7 @@ def run_inference():
     ).to(clip_device)
     clip_model.eval()
 
-    # -------- SegFormer 로드 + weight 로드 (A 우선, 실패시 adapter fallback) --------
+    # -------- Load SegFormer + weights (Method A first, fallback to adapter) --------
     sd = torch.load(MODEL_PATH, map_location=DEVICE)
 
     model = None
@@ -609,45 +609,45 @@ def run_inference():
         model_try.load_state_dict(sd, strict=True)
         model = model_try
         loaded_kind = "A(4ch first-conv patched)"
-        print("✅ 체크포인트를 A방법(4ch first-conv)으로 strict=True 로드 성공")
+        print("✅ Checkpoint loaded successfully with Method A (4ch first-conv), strict=True")
     except Exception as e_a:
-        print(f"⚠️ A방법 strict 로드 실패: {e_a}")
+        print(f"⚠️ Method A strict load failed: {e_a}")
 
         try:
             model_try = SegFormerWithInputAdapter(base_model_name, local_models_base=local_models_base).to(DEVICE)
             model_try.load_state_dict(sd, strict=True)
             model = model_try
             loaded_kind = "Adapter(4->3 1x1 conv)"
-            print("✅ 체크포인트를 Adapter 방식으로 strict=True 로드 성공")
+            print("✅ Checkpoint loaded successfully with Adapter method, strict=True")
         except Exception as e_b:
-            print(f"❌ Adapter strict 로드도 실패: {e_b}")
+            print(f"❌ Adapter strict load also failed: {e_b}")
             raise
 
     model.eval()
     print(f"✅ Loaded model kind: {loaded_kind}")
 
-    # -------- 데이터 경로 (DATA_ROOT/raw, DATA_ROOT/gt) --------
+    # -------- Data paths (DATA_ROOT/raw, DATA_ROOT/gt) --------
     raw_dir = os.path.join(DATA_ROOT, "raw")
     gt_dir = os.path.join(DATA_ROOT, "gt")
     has_gt = os.path.exists(gt_dir)
 
     if not os.path.exists(raw_dir):
-        print(f"❌ raw 폴더가 없습니다: {raw_dir}")
+        print(f"❌ raw folder not found: {raw_dir}")
         return
 
     image_files = sorted([f for f in os.listdir(raw_dir) if f.lower().endswith(IMG_EXTENSIONS)])
     if len(image_files) == 0:
-        print("⚠️ 해당 폴더에 이미지 파일이 없습니다.")
+        print("⚠️ No image files found in the folder.")
         return
 
     if has_gt:
-        print(f"✅ GT 폴더 발견: {gt_dir} -> 평가까지 수행합니다. (동일 파일명 매칭)")
+        print(f"✅ GT folder found: {gt_dir} -> will also perform evaluation. (same filename matching)")
     else:
-        print(f"ℹ️ GT 폴더가 없습니다: {gt_dir} -> 추론만 수행(평가 스킵).")
+        print(f"ℹ️ GT folder not found: {gt_dir} -> inference only (evaluation skipped).")
 
-    print(f"🔍 총 {len(image_files)}장의 이미지를 발견했습니다.")
+    print(f"🔍 Found {len(image_files)} image(s) in total.")
 
-    # ---- 평가 누적 ----
+    # ---- Accumulate evaluation metrics ----
     metric_keys = [
         "IoU", "Dice", "Precision", "Recall", "F1",
         "HD95", "HD", "ASSD",
@@ -662,12 +662,12 @@ def run_inference():
 
         original_bgr = cv2.imread(img_path)
         if original_bgr is None:
-            print(f"⚠️ 이미지를 읽을 수 없습니다 (Skip): {img_name}")
+            print(f"⚠️ Cannot read image (Skip): {img_name}")
             continue
 
         original_rgb = cv2.cvtColor(original_bgr, cv2.COLOR_BGR2RGB)
 
-        # ---------- CLIP heat / grid (cache 우선) ----------
+        # ---------- CLIP heat / grid (cache first) ----------
         h_path = heat_cache_path(clip_cache_dir, img_name, clip_grid)
         g_path = grid_cache_path(clip_cache_dir, img_name, clip_grid)
 
@@ -703,14 +703,14 @@ def run_inference():
         # input resize
         input_rgb = cv2.resize(original_rgb, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
 
-        # ✅ heat 시각화 저장
+        # ✅ Save heat visualization
         heat_overlay_path = os.path.join(heat_overlay_dir, f"HeatOverlay_{os.path.splitext(img_name)[0]}.png")
         save_heat_colormap_overlay(input_rgb.astype(np.uint8), heat, heat_overlay_path, alpha=0.45)
 
         grid_numbers_path = os.path.join(grid_numbers_dir, f"GridNumbers_{os.path.splitext(img_name)[0]}.png")
         save_grid_numbers_overlay(norm_grid, input_rgb.astype(np.uint8), grid_numbers_path)
 
-        # ---------- 모델 입력 ----------
+        # ---------- Model input ----------
         rgb_t = preprocess_rgb_to_tensor(input_rgb).to(DEVICE)  # (1,3,H,W)
 
         heat_in = normalize_heat(heat, HEAT_NORM_MODE)
@@ -718,7 +718,7 @@ def run_inference():
 
         x4 = torch.cat([rgb_t, heat_t], dim=1)  # (1,4,H,W)
 
-        # ---------- 추론 ----------
+        # ---------- Inference ----------
         with torch.no_grad():
             logits = model(x4)
             logits = nn.functional.interpolate(
@@ -728,14 +728,14 @@ def run_inference():
             prob = torch.sigmoid(logits).squeeze().cpu().numpy()
             pred_mask01 = (prob > THRESH).astype(np.uint8)
 
-        # ✅ 예측 마스크 저장: 원본 이미지와 같은 stem + ".png"
+        # ✅ Save predicted mask: same stem as original image + ".png"
         pred_mask255 = (pred_mask01 * 255).astype(np.uint8)
         stem = os.path.splitext(img_name)[0]
         mask_save_name = f"{stem}.png"
         mask_save_path = os.path.join(predmask_dir, mask_save_name)
         cv2.imwrite(mask_save_path, pred_mask255)
 
-        # overlay 저장
+        # Save overlay
         overlay_rgb = apply_overlay(
             image_rgb=input_rgb.astype(np.uint8),
             mask01=pred_mask01,
@@ -754,7 +754,7 @@ def run_inference():
         plt.savefig(fig_save_path, dpi=150)
         plt.close()
 
-        # ---- 평가 (GT 있을 때만) ----
+        # ---- Evaluation (only when GT is available) ----
         row = {
             "image": img_name,
             "mask_out": mask_save_name,
@@ -801,7 +801,7 @@ def run_inference():
         else:
             print(f"💾 [{idx}/{len(image_files)}] overlay: {fig_save_path} | mask: {mask_save_path}")
 
-    # ---- 결과 저장: CSV / JSON ----
+    # ---- Save results: CSV / JSON ----
     all_keys = set()
     for r in per_image_rows:
         all_keys |= set(r.keys())
@@ -848,19 +848,19 @@ def run_inference():
             else:
                 print(f"- {k}: {mean_metrics[k]:.4f}")
     else:
-        print("\nℹ️ GT가 없거나(eval_count=0) 매칭 실패해서 mean metric을 계산하지 않았습니다.")
+        print("\nℹ️ GT not found or eval_count=0 (matching failed); mean metrics not computed.")
 
     with open(metrics_summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    print("\n✅ inference 완료")
+    print("\n✅ Inference complete.")
     print(f"- overlays: {overlay_dir}")
     print(f"- pred masks: {predmask_dir}")
     print(f"- heat overlay: {heat_overlay_dir}")
     print(f"- grid numbers: {grid_numbers_dir}")
     print(f"- per-image metrics csv: {metrics_csv_path}")
     print(f"- summary json: {metrics_summary_path}")
-    print(f"📂 최종 저장 경로: {SAVE_DIR}")
+    print(f"📂 Final output path: {SAVE_DIR}")
 
 
 if __name__ == "__main__":

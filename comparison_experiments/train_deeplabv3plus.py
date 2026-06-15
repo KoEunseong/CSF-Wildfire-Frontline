@@ -49,11 +49,11 @@ class FireLineDataset(Dataset):
         img_name = self.images[idx]
         img_path = os.path.join(self.raw_dir, img_name)
 
-        # 규칙: _Raw.png -> _Line.png
+        # Rule: _Raw.png -> _Line.png
         mask_name = img_name.replace("_Raw.png", "_Line.png")
         mask_path = os.path.join(self.gt_dir, mask_name)
 
-        # fallback: 혹시 GT가 raw와 같은 이름일 때
+        # fallback: in case GT has the same name as raw
         if not os.path.exists(mask_path):
             alt = os.path.join(self.gt_dir, img_name)
             if os.path.exists(alt):
@@ -345,13 +345,13 @@ def train(args):
     # run_id = datetime.now().strftime(f"{args.run_name}_%Y%m%d_%H%M%S")
     # save_dir = os.path.join(args.out_dir, run_id)
     # os.makedirs(save_dir, exist_ok=True)
-    # encoder 이름에서 숫자 추출 (resnet50 → r50)
+    # Extract number from encoder name (resnet50 → r50)
     enc_tag = args.encoder_name.replace("resnet", "r")
 
     run_prefix = f"{args.run_name}_{enc_tag}"
     run_id = datetime.now().strftime(f"{run_prefix}_%Y%m%d_%H%M%S")
 
-    # 추가: epoch별 checkpoint 폴더
+    # Additional: per-epoch checkpoint folder
     ckpt_dir = os.path.join(save_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -380,7 +380,7 @@ def train(args):
             real_val_ds = None
 
     if len(train_ds) == 0:
-        print("❌ 에러: 학습 데이터가 없습니다.")
+        print("❌ Error: No training data found.")
         writer.close()
         return
 
@@ -597,7 +597,7 @@ def train(args):
             )
         print(msg)
 
-        # 매 epoch 저장 추가
+        # Save checkpoint every epoch
         epoch_ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch+1:03d}.pth")
         torch.save(model.state_dict(), epoch_ckpt_path)
         print(f"  💾 Epoch checkpoint saved: {epoch_ckpt_path}")

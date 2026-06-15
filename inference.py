@@ -10,19 +10,19 @@ from transformers import SegformerForSemanticSegmentation
 from datetime import datetime
 
 # ==========================================
-# [1] 설정
+# [1] Config
 # ==========================================
-DATA_ROOT = ""   # 구조: DATA_ROOT/raw, DATA_ROOT/gt  (--data-root 로 지정)
-MODEL_PATH = ""  # 학습된 모델 .pth 경로 (--model-path 로 지정)
+DATA_ROOT = ""   # Structure: DATA_ROOT/raw, DATA_ROOT/gt  (set via --data-root)
+MODEL_PATH = ""  # Path to trained model .pth checkpoint (set via --model-path)
 
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 SAVE_DIR = os.path.join("./Inference_Result", f"Run_{current_time}")
 
-# training과 동일하게!
+# Must match training settings!
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-IMG_SIZE = 512  # meta에 있으면 자동으로 덮어씀
+IMG_SIZE = 512  # automatically overridden if present in meta
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 ALPHA = 0.9
@@ -32,7 +32,7 @@ TOL_PX = 3  # Tol metrics tolerance
 IMG_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
 
 # ==========================================
-# [2] 유틸리티
+# [2] Utilities
 # ==========================================
 def find_train_meta(model_path: str) -> str:
     run_dir = os.path.dirname(model_path)
@@ -103,7 +103,7 @@ def apply_overlay(image_rgb, mask01, color_rgb=(255, 0, 0), alpha=0.8, dilate_vi
     return cv2.addWeighted(image_rgb, 1.0, colored_mask, alpha, 0)
 
 # ==========================================
-# [2.5] Metrics (HD/ASSD 포함) + TolP/TolR/TolF1
+# [2.5] Metrics (including HD/ASSD) + TolP/TolR/TolF1
 # ==========================================
 def metrics_binary(pred01: np.ndarray, gt01: np.ndarray, eps: float = 1e-6):
     pred = pred01.astype(np.uint8)
@@ -216,8 +216,8 @@ def assd(pred01: np.ndarray, gt01: np.ndarray):
 
 def tol_prf(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 1e-6):
     """
-    tolerance 기반 Precision / Recall / F1 반환
-    - tol_px=0 이면 strict(픽셀 정확히 일치) P/R/F1 반환
+    Returns tolerance-based Precision / Recall / F1
+    - If tol_px=0, returns strict (exact pixel match) P/R/F1
     """
     pred = (pred01 > 0).astype(np.uint8)
     gt = (gt01 > 0).astype(np.uint8)
@@ -230,12 +230,12 @@ def tol_prf(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 
     gt_dil = cv2.dilate((gt * 255).astype(np.uint8), k, iterations=1) > 0
     pr_dil = cv2.dilate((pred * 255).astype(np.uint8), k, iterations=1) > 0
 
-    # tol-precision: pred 픽셀이 gt_dil 안에 있으면 TP로 인정
+    # tol-precision: pred pixels inside gt_dil are counted as TP
     tp_p = np.logical_and(pred == 1, gt_dil).sum()
     fp_p = np.logical_and(pred == 1, np.logical_not(gt_dil)).sum()
     tol_prec = tp_p / (tp_p + fp_p + eps)
 
-    # tol-recall: gt 픽셀이 pr_dil 안에 있으면 TP로 인정
+    # tol-recall: gt pixels inside pr_dil are counted as TP
     tp_r = np.logical_and(gt == 1, pr_dil).sum()
     fn_r = np.logical_and(gt == 1, np.logical_not(pr_dil)).sum()
     tol_rec = tp_r / (tp_r + fn_r + eps)
@@ -245,46 +245,46 @@ def tol_prf(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 
 
 def find_gt_mask_path_same_name(gt_dir: str, img_name: str) -> str:
     """
-    ✅ GT 매칭: 오직 동일 파일명만 사용
-    예) test/raw/abc.png -> test/gt/abc.png
+    ✅ GT matching: use exact same filename only
+    e.g.) test/raw/abc.png -> test/gt/abc.png
     """
     cand = os.path.join(gt_dir, img_name)
     return cand if os.path.exists(cand) else ""
 
 # ==========================================
-# [3] 실행 로직
+# [3] Inference Logic
 # ==========================================
 def run_inference():
-    # 저장 폴더 구성
+    # Set up output folder structure
     os.makedirs(SAVE_DIR, exist_ok=True)
     overlay_dir = os.path.join(SAVE_DIR, "overlays")
     predmask_dir = os.path.join(SAVE_DIR, "pred_masks")
     os.makedirs(overlay_dir, exist_ok=True)
     os.makedirs(predmask_dir, exist_ok=True)
 
-    # 평가 결과 저장 파일
+    # Files to save evaluation results
     metrics_csv_path = os.path.join(SAVE_DIR, "metrics_per_image.csv")
     metrics_summary_path = os.path.join(SAVE_DIR, "metrics_summary.json")
 
-    print(f"📂 결과 저장 폴더: '{SAVE_DIR}'")
-    print("🚀 추론 시작!")
+    print(f"📂 Result save folder: '{SAVE_DIR}'")
+    print("🚀 Starting inference!")
 
     if not os.path.exists(MODEL_PATH):
-        print(f"❌ 모델 파일이 없습니다: {MODEL_PATH}")
+        print(f"❌ Model file not found: {MODEL_PATH}")
         return
 
-    # -------- meta 읽어서 base 모델명 / img_size 자동 적용 --------
+    # -------- Read meta to auto-apply base model name / img_size --------
     global IMG_SIZE
     meta = load_meta_if_exists(MODEL_PATH)
 
-    base_model_name = meta.get("model_name", "nvidia/mit-b1")  # meta 없으면 fallback
+    base_model_name = meta.get("model_name", "nvidia/mit-b1")  # fallback if meta not found
     if "img_size" in meta:
         try:
             IMG_SIZE = int(meta["img_size"])
         except Exception:
             pass
 
-    # ✅ ./models 우선 + safetensors 없으면 bin 사용
+    # ✅ prefer ./models + fallback to bin if safetensors not found
     model_id_or_path, local_files_only, use_safetensors, local_weight_kind = resolve_hf_local_first(
         base_model_name, base_dir="./models"
     )
@@ -297,7 +297,7 @@ def run_inference():
     print(f"✅ DEVICE: {DEVICE}")
     print(f"✅ THRESH: {THRESH} | TOL_PX: {TOL_PX}")
 
-    # -------- 모델 생성/로드 --------
+    # -------- Build / load model --------
     kwargs = dict(
         num_labels=1,
         ignore_mismatched_sizes=True,
@@ -313,32 +313,32 @@ def run_inference():
 
     sd = torch.load(MODEL_PATH, map_location=DEVICE)
     model.load_state_dict(sd, strict=True)
-    print("✅ 학습된 모델 가중치를 불러왔습니다. (strict=True)")
+    print("✅ Loaded trained model weights. (strict=True)")
 
     model.eval()
 
-    # 테스트 파일 목록
+    # List test files
     test_raw_dir = os.path.join(DATA_ROOT, "raw")
     test_gt_dir = os.path.join(DATA_ROOT, "gt")
     has_gt = os.path.exists(test_gt_dir)
 
     if not os.path.exists(test_raw_dir):
-        print(f"❌ 테스트 폴더가 없습니다: {test_raw_dir}")
+        print(f"❌ Test folder not found: {test_raw_dir}")
         return
 
     image_files = sorted([f for f in os.listdir(test_raw_dir) if f.lower().endswith(IMG_EXTENSIONS)])
     if len(image_files) == 0:
-        print("⚠️ 해당 폴더에 이미지 파일이 없습니다.")
+        print("⚠️ No image files found in the folder.")
         return
 
     if has_gt:
-        print(f"✅ GT 폴더 발견: {test_gt_dir} -> 평가까지 수행합니다. (동일 파일명 매칭)")
+        print(f"✅ GT folder found: {test_gt_dir} -> will also perform evaluation. (same filename matching)")
     else:
-        print(f"ℹ️ GT 폴더가 없습니다: {test_gt_dir} -> 추론만 수행(평가 스킵).")
+        print(f"ℹ️ GT folder not found: {test_gt_dir} -> inference only (evaluation skipped).")
 
-    print(f"🔍 총 {len(image_files)}장의 이미지를 발견했습니다.")
+    print(f"🔍 Found {len(image_files)} image(s) in total.")
 
-    # ---- 평가 누적 ----
+    # ---- Accumulate evaluation metrics ----
     metric_keys = [
         "IoU", "Dice", "Precision", "Recall", "F1",
         "HD95", "HD", "ASSD",
@@ -348,7 +348,7 @@ def run_inference():
     sum_metrics = {k: 0.0 for k in metric_keys}
     eval_count = 0
 
-    # ---- 저장/읽기 카운트(누락 감지용) ----
+    # ---- Save / read counters (for missing file detection) ----
     read_ok_count = 0
     mask_save_ok_count = 0
 
@@ -357,7 +357,7 @@ def run_inference():
 
         original_bgr = cv2.imread(img_path)
         if original_bgr is None:
-            print(f"⚠️ 이미지를 읽을 수 없습니다 (Skip): {img_name}")
+            print(f"⚠️ Cannot read image (Skip): {img_name}")
             per_image_rows.append({
                 "image": img_name,
                 "mask_out": f"{os.path.splitext(img_name)[0]}_mask.png",
@@ -372,7 +372,7 @@ def run_inference():
 
         input_tensor = preprocess_to_tensor(input_rgb).to(DEVICE)
 
-        # 추론
+        # Inference
         with torch.no_grad():
             outputs = model(pixel_values=input_tensor)
             logits = nn.functional.interpolate(
@@ -383,8 +383,8 @@ def run_inference():
             pred_mask01 = (prob > THRESH).astype(np.uint8)
 
         # --------------------------
-        # ✅ 예측 마스크 저장: 원본 파일명 + "_mask.png"
-        # + 저장 실패/누락 체크
+        # ✅ Save predicted mask: original filename + "_mask.png"
+        # + check for save failures / missing files
         # --------------------------
         pred_mask255 = (pred_mask01.astype(np.uint8) * 255)
 
@@ -394,7 +394,7 @@ def run_inference():
 
         ok = cv2.imwrite(mask_save_path, pred_mask255)
         if (not ok) or (not os.path.exists(mask_save_path)) or (os.path.getsize(mask_save_path) == 0):
-            print(f"❌ mask 저장 실패: {mask_save_path} | imwrite_ok={ok}")
+            print(f"❌ mask save failed: {mask_save_path} | imwrite_ok={ok}")
             per_image_rows.append({
                 "image": img_name,
                 "mask_out": mask_save_name,
@@ -404,7 +404,7 @@ def run_inference():
 
         mask_save_ok_count += 1
 
-        # 오버레이 저장
+        # Save overlay
         overlay_rgb = apply_overlay(
             image_rgb=input_rgb.astype(np.uint8),
             mask01=pred_mask01,
@@ -423,7 +423,7 @@ def run_inference():
         plt.savefig(fig_save_path, dpi=150)
         plt.close()
 
-        # ---- 평가 (GT 있을 때만) ----
+        # ---- Evaluation (only when GT is available) ----
         row = {"image": img_name, "mask_out": mask_save_name}
         if has_gt:
             gt_path = find_gt_mask_path_same_name(test_gt_dir, img_name)
@@ -464,7 +464,7 @@ def run_inference():
         else:
             print(f"💾 [{idx}/{len(image_files)}] overlay: {fig_save_path} | mask: {mask_save_path}")
 
-    # ---- 결과 저장: CSV / JSON ----
+    # ---- Save results: CSV / JSON ----
     all_keys = set()
     for r in per_image_rows:
         all_keys |= set(r.keys())
@@ -504,12 +504,12 @@ def run_inference():
             else:
                 print(f"- {k}: {mean_metrics[k]:.4f}")
     else:
-        print("\nℹ️ GT가 없거나(eval_count=0) 매칭 실패해서 mean metric을 계산하지 않았습니다.")
+        print("\nℹ️ GT not found or eval_count=0 (matching failed); mean metrics not computed.")
 
     with open(metrics_summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    # ---- 저장 누락 점검 (파일 시스템 기준) ----
+    # ---- Check for missing saves (filesystem-based) ----
     saved_masks = sorted([f for f in os.listdir(predmask_dir) if f.lower().endswith(".png")])
     expected_mask_names = {f"{os.path.splitext(n)[0]}_mask.png" for n in image_files}
     saved_set = set(saved_masks)
@@ -529,12 +529,12 @@ def run_inference():
     else:
         print("✅ no missing masks (by name check)")
 
-    print("\n✅ inference 완료")
+    print("\n✅ Inference complete.")
     print(f"- overlays: {overlay_dir}")
     print(f"- pred masks: {predmask_dir}")
     print(f"- per-image metrics csv: {metrics_csv_path}")
     print(f"- summary json: {metrics_summary_path}")
-    print(f"📂 최종 저장 경로: {SAVE_DIR}")
+    print(f"📂 Final output path: {SAVE_DIR}")
 
 if __name__ == "__main__":
     import argparse

@@ -5,23 +5,23 @@ from glob import glob
 from collections import defaultdict
 
 # =========================
-# 설정
+# Config
 # =========================
-RAW_DIR = ""              # raw 이미지 폴더 (--raw-dir 로 지정)
-GT_DIR  = ""              # GT 마스크 폴더 (--gt-dir 로 지정)
-OUT_DIR = "./outputs/overlay_gt"  # 결과 저장 폴더 (--out-dir 로 변경 가능)
+RAW_DIR = ""              # Raw image folder (set via --raw-dir)
+GT_DIR  = ""              # GT mask folder (set via --gt-dir)
+OUT_DIR = "./outputs/overlay_gt"  # Output save folder (can be changed via --out-dir)
 
-COLOR = (255, 0, 0)      # 🔵 파란색 (BGR)
-LINE_THICKNESS = 3       # GT 선 두께 (1=원본, 3~5 추천)
+COLOR = (255, 0, 0)      # 🔵 Blue color (BGR)
+LINE_THICKNESS = 3       # GT line thickness (1=original, 3~5 recommended)
 
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
-# 파일명 suffix 규칙
-RAW_TAG = "_Raw"         # raw 파일명 끝에 붙는 태그
-GT_TAG  = "_Line"        # gt  파일명 끝에 붙는 태그
+# Filename suffix rules
+RAW_TAG = "_Raw"         # Tag appended to raw filenames
+GT_TAG  = "_Line"        # Tag appended to GT filenames
 
 # =========================
-# 유틸
+# Utils
 # =========================
 def ensure_dir(p):
     os.makedirs(p, exist_ok=True)
@@ -33,7 +33,7 @@ def list_images(dir_path):
     ])
 
 def strip_tag(stem: str, tag: str) -> str:
-    """stem 끝에 tag가 붙어있으면 제거"""
+    """Remove tag from the end of stem if present"""
     if not tag:
         return stem
     if stem.lower().endswith(tag.lower()):
@@ -42,10 +42,10 @@ def strip_tag(stem: str, tag: str) -> str:
 
 def normalize_pair_stem(stem: str) -> str:
     """
-    raw/gt 모두에서 공통으로 비교할 key 만들기.
-    - raw면 _Raw 제거
-    - gt면 _Line 제거
-    둘 중 뭐든 들어오면 공통 stem으로 맞춰짐.
+    Build a common key for comparing raw/gt filenames.
+    - Strip _Raw if present
+    - Strip _Line if present
+    Either input normalizes to the same common stem.
     """
     s = strip_tag(stem, RAW_TAG)
     s = strip_tag(s, GT_TAG)
@@ -53,7 +53,7 @@ def normalize_pair_stem(stem: str) -> str:
 
 def build_gt_index(gt_dir):
     """
-    GT 파일들을 공통 stem 기준으로 인덱싱
+    Index GT files by their common stem
     """
     gt_files = list_images(gt_dir)
     gt_by_stem = defaultdict(list)
@@ -68,8 +68,8 @@ def build_gt_index(gt_dir):
 
 def pick_best_candidate(raw_path, cands):
     """
-    후보가 여러 개면 raw와 확장자가 같은 것을 우선.
-    그래도 여러 개면 알파벳 순으로 하나 선택.
+    If multiple candidates exist, prefer one with the same extension as raw.
+    If still multiple, pick the first alphabetically.
     """
     if not cands:
         return None
@@ -90,14 +90,14 @@ def thicken_mask(mask01, thickness):
     return cv2.dilate(mask01, kernel, iterations=1)
 
 # =========================
-# 메인
+# Main
 # =========================
 def main():
     ensure_dir(OUT_DIR)
 
     raw_files = list_images(RAW_DIR)
     if not raw_files:
-        print("❌ RAW 이미지 없음")
+        print("❌ No RAW images found")
         return
 
     gt_by_stem = build_gt_index(GT_DIR)
@@ -130,10 +130,10 @@ def main():
             mismatch += 1
             continue
 
-        # 🔥 두께 적용
+        # 🔥 Apply thickness
         mask = thicken_mask(mask, LINE_THICKNESS)
 
-        # 🔵 그냥 덮어쓰기
+        # 🔵 Direct pixel overwrite
         out = img.copy()
         out[mask == 1] = COLOR
 
@@ -141,10 +141,10 @@ def main():
         cv2.imwrite(os.path.join(OUT_DIR, out_name), out)
         saved += 1
 
-    print(f"✅ 저장: {saved}")
-    print(f"⚠️ GT 없음: {missing}")
-    print(f"⚠️ 크기 불일치: {mismatch}")
-    print(f"⚠️ 읽기 실패: {unread}")
+    print(f"✅ Saved: {saved}")
+    print(f"⚠️ GT not found: {missing}")
+    print(f"⚠️ Size mismatch: {mismatch}")
+    print(f"⚠️ Read failed: {unread}")
     print(f"📂 OUT_DIR: {OUT_DIR}")
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# 이 버전이 현재 4채널을 텐서를 SegFormer입력으로 바로 넣는 기본 모델입니다.
+# This version is the base model that directly feeds a 4-channel tensor as input to SegFormer.
 
 import os
 import cv2
@@ -22,7 +22,7 @@ from transformers import SegformerForSemanticSegmentation
 
 
 # ============================================================
-# 0) Helpers: local-first + safetensors/bin 선택
+# 0) Helpers: local-first + safetensors/bin selection
 # ============================================================
 def choose_local_weight_format(local_dir: str):
     st = os.path.join(local_dir, "model.safetensors")
@@ -294,8 +294,8 @@ class FireLineClipDataset(Dataset):
 
 
 # ============================================================
-# 5) Losses (✅ 추가: dice / bce / dice+bce / wft)
-#    - train loop 유지하려고 forward(logits, targets, weight_map=None)로 통일
+# 5) Losses (✅ added: dice / bce / dice+bce / wft)
+#    - unified as forward(logits, targets, weight_map=None) to keep the train loop unchanged
 # ============================================================
 class DiceLoss(nn.Module):
     def __init__(self, eps=1e-6):
@@ -384,7 +384,7 @@ def dice_score_from_logits(logits, targets, thr=0.5, eps=1e-6):
 
 
 # ============================================================
-# 6) Validation metrics (+HD/ASSD 포함)
+# 6) Validation metrics (including HD/ASSD)
 # ============================================================
 def metrics_binary(pred01: np.ndarray, gt01: np.ndarray, eps: float = 1e-6):
     pred = pred01.astype(np.uint8)
@@ -524,12 +524,12 @@ def tol_f1(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 1
 
 
 # ============================================================
-# 7) Model (A방법): SegFormer 입력 conv를 4ch로 확장 (adapter 없음)
+# 7) Model (Method A): Expand SegFormer input conv to 4ch (no adapter)
 # ============================================================
 def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegmentation):
     """
-    SegFormer의 첫 입력 Conv(in_channels=3)을 in_channels=4로 교체하고,
-    pretrained RGB 가중치는 복사, heat 채널 가중치는 0으로 초기화.
+    Replace SegFormer's first input Conv (in_channels=3) with in_channels=4,
+    copy pretrained RGB weights, and initialize heat channel weights to 0.
     """
     proj = None
     try:
@@ -551,8 +551,8 @@ def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegme
             padding_mode=old.padding_mode,
         )
         with torch.no_grad():
-            new.weight[:, :3, :, :].copy_(old.weight)   # RGB 복사
-            new.weight[:, 3:4, :, :].zero_()            # heat 채널 0 init
+            new.weight[:, :3, :, :].copy_(old.weight)   # copy RGB weights
+            new.weight[:, 3:4, :, :].zero_()            # heat channel init to 0
             if old.bias is not None:
                 new.bias.copy_(old.bias)
 
@@ -599,7 +599,7 @@ def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegme
 
 class SegFormer4Ch(nn.Module):
     """
-    (B,4,H,W) -> SegFormer(첫 입력 conv를 4ch로 패치) -> logits
+    (B,4,H,W) -> SegFormer(first input conv patched to 4ch) -> logits
     """
     def __init__(self, seg_model_name: str, local_models_base: str = "./models"):
         super().__init__()
@@ -629,7 +629,7 @@ class SegFormer4Ch(nn.Module):
 
 
 # ============================================================
-# 8) Eval helper (Val/RealVal 공통)
+# 8) Eval helper (shared for Val/RealVal)
 # ============================================================
 @torch.no_grad()
 def run_eval(model, loader, criterion, args, device, name="Val"):
@@ -682,7 +682,7 @@ def run_eval(model, loader, criterion, args, device, name="Val"):
 
 
 # ============================================================
-# 9) Train (TensorBoard 포함) + RealVal 평가 + RealVal best 저장
+# 9) Train (with TensorBoard) + RealVal evaluation + RealVal best checkpoint saving
 # ============================================================
 def train(args):
     device = "cuda" if (torch.cuda.is_available() and not args.cpu) else "cpu"
@@ -758,7 +758,7 @@ def train(args):
             real_val_ds = None
 
     if len(train_ds) == 0:
-        print("❌ train 데이터가 없습니다.")
+        print("❌ No training data found.")
         writer.close()
         return
 
@@ -781,12 +781,12 @@ def train(args):
     else:
         print("ℹ️ real_val not found or empty -> skip real_val evaluation.")
 
-    # model (A방법)
+    # model (Method A)
     model = SegFormer4Ch(args.model_name, local_models_base=args.local_models_base).to(device)
     criterion = build_criterion(args).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    # ---- meta 저장 ----
+    # ---- save meta ----
     meta = {
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -840,7 +840,7 @@ def train(args):
 
     global_step = 0
     for epoch in range(args.epochs):
-        # ---- train
+        # ---- train ----
         model.train()
         t_loss = 0.0
         t_dice = 0.0
@@ -872,14 +872,14 @@ def train(args):
         t_loss /= max(1, len(train_loader))
         t_dice /= max(1, len(train_loader))
 
-        # ---- val + real_val eval
+        # ---- val + real_val eval ----
         v_loss, v_metrics = run_eval(model, val_loader, criterion, args, device, name="Val")
 
         rv_loss, rv_metrics = None, None
         if real_val_loader is not None:
             rv_loss, rv_metrics = run_eval(model, real_val_loader, criterion, args, device, name="RealVal")
 
-        # ---- TensorBoard epoch logging
+        # ---- TensorBoard epoch logging ----
         writer.add_scalar("loss/train", t_loss, epoch + 1)
         writer.add_scalar("dice/train", t_dice, epoch + 1)
 
@@ -912,10 +912,10 @@ def train(args):
             )
         print(msg)
 
-        # save epoch
+        # save epoch checkpoint
         torch.save(model.state_dict(), os.path.join(save_dir, f"model_epoch_{epoch+1}.pth"))
 
-        # best (val)
+        # best (val) ----
         if v_loss < best_val:
             best_val = v_loss
             torch.save(model.state_dict(), best_path)
@@ -930,7 +930,7 @@ def train(args):
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
 
-        # best (real_val)
+        # best (real_val) ----
         if rv_loss is not None and rv_loss < best_real:
             best_real = rv_loss
             torch.save(model.state_dict(), real_best_path)
@@ -945,7 +945,7 @@ def train(args):
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    # last
+    # save last checkpoint
     last_path = os.path.join(save_dir, "last_fireline_model.pth")
     torch.save(model.state_dict(), last_path)
     meta["last"] = {"epoch": args.epochs, "path": os.path.basename(last_path)}
@@ -988,7 +988,7 @@ def build_parser():
     p.add_argument("--max_weight", type=float, default=1.0)
     p.add_argument("--weight_sigma", type=float, default=1.0)
 
-    # ✅ loss 선택
+    # ✅ loss selection
     p.add_argument("--loss", type=str, default="wft",
                    choices=["wft", "dice", "bce", "dicebce"],
                    help="Loss: wft | dice | bce | dicebce")

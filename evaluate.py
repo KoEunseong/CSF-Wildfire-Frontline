@@ -6,23 +6,23 @@ from glob import glob
 from datetime import datetime
 
 # =========================
-# 설정
+# Config
 # =========================
-PRED_DIR = ""   # 예측 마스크 폴더 (--pred-dir 로 지정)
-GT_DIR = ""     # GT 폴더 (--gt-dir 로 지정)
+PRED_DIR = ""   # Predicted mask folder (set via --pred-dir)
+GT_DIR = ""     # GT folder (set via --gt-dir)
 IMG_SIZE = 250
 
-# tolerance F1에서 허용 반경(픽셀)
+# Tolerance radius (pixels) for tolerance F1
 TOLERANCE_R = 3
 
 EXTS = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]
 
-# ✅ (1) evaluate 결과를 저장할 상위 폴더
+# ✅ (1) Root folder to save evaluation results
 EVAL_ROOT = "./evaluate"
 
 
 # =========================
-# 유틸
+# Utils
 # =========================
 def read_mask_01(path, target_size=None):
     m = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
@@ -40,7 +40,7 @@ def read_mask_01(path, target_size=None):
 #             return cand
 #     return None
 def find_gt_for_pred(pred_path, gt_dir):
-    base = os.path.splitext(os.path.basename(pred_path))[0]  # 예: "0000"
+    base = os.path.splitext(os.path.basename(pred_path))[0]  # e.g. "0000"
     gt_name = f"Wildfire_{base}_Line.png"
     cand = os.path.join(gt_dir, gt_name)
     return cand if os.path.exists(cand) else None
@@ -132,10 +132,10 @@ def tolerance_f1(pred01, gt01, r=3):
 
 
 # =========================
-# 메인
+# Main
 # =========================
 def main():
-    # ✅ (1) 실행마다 evaluate/Run_시간 폴더 생성
+    # ✅ (1) Create a new evaluate/Run_<timestamp> folder for each run
     run_id = datetime.now().strftime("Run_%Y%m%d_%H%M%S")
     out_dir = os.path.join(EVAL_ROOT, run_id)
     os.makedirs(out_dir, exist_ok=True)
@@ -145,7 +145,7 @@ def main():
 
     pred_files = sorted([p for p in glob(os.path.join(PRED_DIR, "*")) if os.path.splitext(p)[1].lower() in EXTS])
     if len(pred_files) == 0:
-        print(f"❌ pred mask가 없습니다: {PRED_DIR}")
+        print(f"❌ No predicted masks found: {PRED_DIR}")
         return
 
     rows = []
@@ -179,19 +179,19 @@ def main():
             print(f"✅ {i}/{len(pred_files)} processed... (matched {len(rows)}, missing_gt {missing_gt})")
 
     if len(rows) == 0:
-        print("❌ 매칭된 GT가 없습니다. 파일명 규칙을 확인하세요.")
+        print("❌ No matched GT found. Please check the filename convention.")
         print(f"- PRED_DIR: {PRED_DIR}")
         print(f"- GT_DIR: {GT_DIR}")
         return
 
-    # CSV 저장
+    # Save CSV
     fieldnames = list(rows[0].keys())
     with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    # 요약 계산
+    # Compute summary statistics
     keys = ["IoU", "Dice", "Precision", "Recall", "F1", "Chamfer", "HD95", "TolF1"]
     summary_lines = []
     summary_lines.append(f"Total pred files: {len(pred_files)}")
@@ -203,11 +203,11 @@ def main():
         vals = np.array([r[k] for r in rows], dtype=np.float32)
         summary_lines.append(f"{k}: mean={vals.mean():.6f}, std={vals.std():.6f}")
 
-    # summary.txt 저장
+    # Save summary.txt
     with open(out_txt, "w") as f:
         f.write("\n".join(summary_lines) + "\n")
 
-    # ✅ (2) 평가 끝나면 summary를 콘솔에도 출력
+    # ✅ (2) Print summary to console after evaluation
     print("\n" + "="*50)
     print("📌 Evaluation Summary (dataset-level)")
     print("="*50)

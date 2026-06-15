@@ -48,11 +48,11 @@ class FireLineDataset(Dataset):
         img_name = self.images[idx]
         img_path = os.path.join(self.raw_dir, img_name)
 
-        # 규칙: _Raw.png -> _Line.png
+        # Rule: _Raw.png -> _Line.png
         mask_name = img_name.replace("_Raw.png", "_Line.png")
         mask_path = os.path.join(self.gt_dir, mask_name)
 
-        # fallback: 혹시 GT가 raw와 같은 이름일 때
+        # fallback: in case GT has the same name as raw
         if not os.path.exists(mask_path):
             alt = os.path.join(self.gt_dir, img_name)
             if os.path.exists(alt):
@@ -102,7 +102,7 @@ class DiceLoss(nn.Module):
 class DiceBCELoss(nn.Module):
     """
     Dice + BCEWithLogitsLoss
-    가중치는 기본 1:1로 고정.
+    Weights are fixed at 1:1 by default.
     """
     def __init__(self, smooth=1e-6):
         super().__init__()
@@ -120,7 +120,7 @@ class DiceBCELoss(nn.Module):
 class WeightedFocalTverskyLoss(nn.Module):
     """
     Weighted Focal Tversky Loss
-    - weight_map 없으면 ones로 처리 (baseline dataset에서도 사용 가능)
+    - If weight_map is None, treated as ones (can also be used with baseline dataset)
     """
     def __init__(self, alpha=0.5, beta=0.5, gamma=1.33, eps=1e-6):
         super().__init__()
@@ -145,8 +145,8 @@ class WeightedFocalTverskyLoss(nn.Module):
 
 def build_criterion(args):
     """
-    학습 루프를 안 건드리기 위해:
-      - loss가 Dice든 BCE든 DiceBCE든 WFT든 (total, dice, bce) 형태로 반환하도록 통일.
+    To avoid modifying the training loop:
+      - all loss types (Dice, BCE, DiceBCE, WFT) return a unified (total, dice, bce) tuple.
     """
     loss_name = args.loss.lower()
 
@@ -156,7 +156,7 @@ def build_criterion(args):
         class _DiceWrapper(nn.Module):
             def forward(self, logits, targets):
                 d = dice(logits, targets)
-                z = torch.tensor(0.0, device=logits.device)  # bce 없음
+                z = torch.tensor(0.0, device=logits.device)  # no bce
                 return d, d.detach(), z
 
         return _DiceWrapper()
@@ -167,7 +167,7 @@ def build_criterion(args):
         class _BCEWrapper(nn.Module):
             def forward(self, logits, targets):
                 b = bce(logits, targets)
-                z = torch.tensor(0.0, device=logits.device)  # dice 없음
+                z = torch.tensor(0.0, device=logits.device)  # no dice
                 return b, z, b.detach()
 
         return _BCEWrapper()
@@ -182,8 +182,8 @@ def build_criterion(args):
         class _WFTWrapper(nn.Module):
             def forward(self, logits, targets):
                 total = wft(logits, targets, weight_map=None)
-                d = dice_for_log(logits, targets)  # 로깅용 dice loss
-                z = torch.tensor(0.0, device=logits.device)  # bce 없음
+                d = dice_for_log(logits, targets)  # dice loss for logging
+                z = torch.tensor(0.0, device=logits.device)  # no bce
                 return total, d.detach(), z
 
         return _WFTWrapper()
@@ -253,7 +253,7 @@ def hd95(pred01: np.ndarray, gt01: np.ndarray):
 
 def hausdorff_distance(pred01: np.ndarray, gt01: np.ndarray):
     """
-    Hausdorff Distance (max, symmetric). 단위: pixel
+    Hausdorff Distance (max, symmetric). Unit: pixel
     """
     pred = (pred01 > 0).astype(np.uint8)
     gt = (gt01 > 0).astype(np.uint8)
@@ -281,7 +281,7 @@ def hausdorff_distance(pred01: np.ndarray, gt01: np.ndarray):
 
 def assd(pred01: np.ndarray, gt01: np.ndarray):
     """
-    Average Symmetric Surface Distance (ASSD). 단위: pixel
+    Average Symmetric Surface Distance (ASSD). Unit: pixel
     """
     pred = (pred01 > 0).astype(np.uint8)
     gt = (gt01 > 0).astype(np.uint8)
@@ -380,7 +380,7 @@ def train(args):
     train_ds = FireLineDataset(args.data_root, split="train", transform=tfm)
     valid_ds = FireLineDataset(args.data_root, split="val", transform=tfm)
 
-    # ✅ real_val 추가
+    # ✅ add real_val
     real_val_ds = None
     real_val_raw = os.path.join(args.data_root, "real_val", "raw")
     has_real_val = os.path.exists(real_val_raw)
@@ -390,7 +390,7 @@ def train(args):
             real_val_ds = None
 
     if len(train_ds) == 0:
-        print("❌ 에러: 학습 데이터가 없습니다.")
+        print("❌ Error: No training data found.")
         writer.close()
         return
 
@@ -409,7 +409,7 @@ def train(args):
         pin_memory=(device == "cuda")
     )
 
-    # ✅ real_val loader
+    # ✅ real_val loader setup
     real_val_loader = None
     if real_val_ds is not None:
         real_val_loader = DataLoader(
@@ -511,7 +511,7 @@ def train(args):
 
     last_path = os.path.join(save_dir, "last_fireline_model.pth")
 
-    global_step = 0  # ✅ TensorBoard step
+    global_step = 0  # ✅ TensorBoard global step counter
 
     for epoch in range(args.epochs):
         # ---- Train ----
@@ -541,7 +541,7 @@ def train(args):
             total_diceL += dice_l.item()
             total_bceL  += bce_l.item()
 
-            # ✅ TensorBoard (step 단위)
+            # ✅ TensorBoard (per step)
             writer.add_scalar("step/loss", loss.item(), global_step)
             writer.add_scalar("step/dice_loss", dice_l.item(), global_step)
             writer.add_scalar("step/bce_loss", bce_l.item(), global_step)
@@ -623,7 +623,7 @@ def train(args):
         if real_val_loader is not None:
             avg_rval, avg_rval_diceL, avg_rval_bceL, avg_rmetrics = run_eval(real_val_loader, "RealVal")
 
-        # ✅ TensorBoard (epoch 단위)
+        # ✅ TensorBoard (per epoch)
         writer.add_scalar("epoch/loss_train", avg_train, epoch + 1)
         writer.add_scalar("epoch/dice_loss_train", avg_train_diceL, epoch + 1)
         writer.add_scalar("epoch/bce_loss_train", avg_train_bceL, epoch + 1)
@@ -634,7 +634,7 @@ def train(args):
         for k, v in avg_metrics.items():
             writer.add_scalar(f"metrics/val_{k}", v, epoch + 1)
 
-        # ✅ real_val TensorBoard
+        # ✅ real_val TensorBoard logging
         if avg_rval is not None:
             writer.add_scalar("epoch/loss_real_val", avg_rval, epoch + 1)
             writer.add_scalar("epoch/dice_loss_real_val", avg_rval_diceL, epoch + 1)
