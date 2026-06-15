@@ -11,7 +11,6 @@ Architecture: **CLIP-Heat + SegFormer** — a 4-channel input SegFormer that fus
 |---|---|---|
 | `train_clipheat.py` | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
 | `train_baseline.py` | SegFormer 3ch | RGB only |
-| `comparison_experiments/train_deeplabv3plus.py` | DeepLabV3+ | RGB only |
 
 ---
 
@@ -140,8 +139,6 @@ frontline_model_public/
 ├── inference_clipheat.py
 ├── evaluate.py
 ├── overlay.py
-├── comparison_experiments/
-│   └── train_deeplabv3plus.py
 ├── models/             # HuggingFace model cache (not tracked)
 ├── clip_cache/         # CLIP feature cache (not tracked)
 ├── outputs/            # Inference / eval results (not tracked)
