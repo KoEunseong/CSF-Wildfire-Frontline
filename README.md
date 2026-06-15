@@ -7,10 +7,10 @@ Architecture: **CLIP-Heat + SegFormer** — a 4-channel input SegFormer that fus
 
 ## Models
 
-| Script | Architecture | Input |
-|---|---|---|
-| `train_clipheat.py` | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
-| `train_baseline.py` | SegFormer 3ch | RGB only |
+| Script | Mode | Architecture | Input |
+|---|---|---|---|
+| `train.py` (default) | CLIP-Heat | SegFormer 4ch direct | RGB + CLIP heatmap (4ch tensor) |
+| `train.py --no-clip` | Baseline | SegFormer 3ch | RGB only |
 
 ---
 
@@ -72,16 +72,16 @@ models/
 ## Training
 
 ```bash
-# CLIP-Heat (main model)
-python train_clipheat.py \
-    --data-root ./Dataset/sim \
-    --model-name nvidia/mit-b3 \
-    --clip-model openai/clip-vit-base-patch32
+# CLIP-Heat (default — 4ch SegFormer + CLIP heatmap)
+python train.py \
+    --data_root ./Dataset/sim \
+    --model_name nvidia/mit-b3 \
+    --clip_model openai/clip-vit-base-patch32
 
-# Baseline (RGB only)
-python train_baseline.py \
-    --data-root ./Dataset/sim \
-    --model-name nvidia/mit-b1
+# Baseline (RGB only — standard 3ch SegFormer)
+python train.py --no-clip \
+    --data_root ./Dataset/sim \
+    --model_name nvidia/mit-b3
 ```
 
 Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`.
@@ -91,18 +91,21 @@ Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`
 ## Inference
 
 ```bash
-# Baseline
+# CLIP-Heat (default — 4ch model + CLIP heatmap)
 python inference.py \
     --data-root ./Dataset/real/real_data \
-    --model-path ./train_runs/<run_id>/best_model.pth
+    --model-path ./train_runs/<run_id>/best_fireline_model.pth
 
-# CLIP-Heat
-python inference_clipheat.py \
+# Baseline (RGB only — standard 3ch model)
+python inference.py --no-clip \
     --data-root ./Dataset/real/real_data \
-    --model-path ./train_runs/<run_id>/best_model.pth
+    --model-path ./train_runs/<run_id>/best_fireline_model.pth
 ```
 
-Results are saved to `./outputs/Run_<timestamp>/`.
+If `train_meta.json` is found next to the checkpoint and contains `"use_clip": false`,
+`--no-clip` is inferred automatically.
+
+Results are saved to `./Inference_Result/Run_<timestamp>/`.
 
 ---
 
@@ -110,7 +113,7 @@ Results are saved to `./outputs/Run_<timestamp>/`.
 
 ```bash
 python evaluate.py \
-    --pred-dir ./outputs/Run_<timestamp>/pred_masks \
+    --pred-dir ./Inference_Result/Run_<timestamp>/pred_masks \
     --gt-dir ./Dataset/real/real_data/gt
 ```
 
@@ -133,10 +136,8 @@ python overlay.py \
 
 ```
 frontline_model_public/
-├── train_clipheat.py
-├── train_baseline.py
+├── train.py
 ├── inference.py
-├── inference_clipheat.py
 ├── evaluate.py
 ├── overlay.py
 ├── models/             # HuggingFace model cache (not tracked)

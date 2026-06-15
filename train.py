@@ -1,4 +1,7 @@
-# This version is the base model that directly feeds a 4-channel tensor as input to SegFormer.
+# Unified training script: CLIP-Heat mode (default) + Baseline RGB-only mode (--no-clip)
+#
+#   Default (no flag): 4-channel SegFormer4Ch with CLIP heatmap  (train_clipheat.py behaviour)
+#   --no-clip flag:    standard 3-channel SegFormer, RGB only      (train_baseline.py behaviour)
 
 import os
 import cv2
@@ -17,7 +20,6 @@ from torch.utils.tensorboard import SummaryWriter
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-from transformers import CLIPProcessor, CLIPModel
 from transformers import SegformerForSemanticSegmentation
 
 
@@ -104,14 +106,14 @@ def make_weight_map_from_band(band01: np.ndarray, max_weight: float = 6.0, sigma
 
 
 # ============================================================
-# 3) CLIP heatmap generator (grid patches)
+# 3) CLIP heatmap generator (grid patches) — only used in CLIP mode
 # ============================================================
 @torch.no_grad()
 def clip_fire_heatmap(
-    clip_model: CLIPModel,
-    clip_processor: CLIPProcessor,
+    clip_model,
+    clip_processor,
     image_rgb_uint8: np.ndarray,
-    prompts: list[str],
+    prompts: list,
     grid: int = 16,
     patch_px: int = 224,
     device: str = "cpu"
@@ -160,7 +162,7 @@ def clip_fire_heatmap(
 
 
 # ============================================================
-# 4) Dataset: (4ch input, band_mask, wmap) with CLIP cache
+# 4a) Dataset for CLIP-Heat mode: (4ch input, band_mask, wmap)
 # ============================================================
 class FireLineClipDataset(Dataset):
     def __init__(
@@ -172,12 +174,14 @@ class FireLineClipDataset(Dataset):
         max_weight: float = 6.0,
         weight_sigma: float = 4.0,
         clip_model_name: str = "openai/clip-vit-base-patch32",
-        clip_prompts: list[str] = None,
+        clip_prompts: list = None,
         clip_grid: int = 16,
         clip_cache_dir: str = "./clip_cache",
         clip_device: str = "cpu",
         local_models_base: str = "./models",
     ):
+        from transformers import CLIPProcessor, CLIPModel
+
         self.root_dir = root_dir
         self.split = split
         self.img_size = img_size
@@ -294,8 +298,67 @@ class FireLineClipDataset(Dataset):
 
 
 # ============================================================
-# 5) Losses (✅ added: dice / bce / dice+bce / wft)
-#    - unified as forward(logits, targets, weight_map=None) to keep the train loop unchanged
+# 4b) Dataset for baseline (RGB-only) mode: (3ch input, mask)
+# ============================================================
+class FireLineDataset(Dataset):
+    def __init__(self, root_dir, split="train", transform=None):
+        self.root_dir = root_dir
+        self.split = split
+        self.transform = transform
+
+        self.raw_dir = os.path.join(root_dir, split, "raw")
+        self.gt_dir  = os.path.join(root_dir, split, "gt")
+
+        if not os.path.exists(self.raw_dir):
+            self.images = []
+        else:
+            self.images = sorted([f for f in os.listdir(self.raw_dir) if f.lower().endswith(".png")])
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img_name = self.images[idx]
+        img_path = os.path.join(self.raw_dir, img_name)
+
+        # Rule: _Raw.png -> _Line.png
+        mask_name = img_name.replace("_Raw.png", "_Line.png")
+        mask_path = os.path.join(self.gt_dir, mask_name)
+
+        # fallback: in case GT has the same name as raw
+        if not os.path.exists(mask_path):
+            alt = os.path.join(self.gt_dir, img_name)
+            if os.path.exists(alt):
+                mask_path = alt
+
+        if not os.path.exists(mask_path):
+            raise RuntimeError(f"Mask not found for image: {img_name}\nTried: {mask_path}")
+
+        image = cv2.imread(img_path)
+        if image is None:
+            raise RuntimeError(f"Failed to read image: {img_path}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise RuntimeError(f"Failed to read mask: {mask_path}")
+
+        mask = (mask > 128).astype(np.float32)  # 0/1 float
+
+        if self.transform is not None:
+            out = self.transform(image=image, mask=mask)
+            image = out["image"]                 # (3,H,W)
+            mask  = out["mask"].unsqueeze(0)     # (1,H,W)
+        else:
+            image = torch.tensor(image).permute(2, 0, 1).float() / 255.0
+            mask  = torch.tensor(mask).unsqueeze(0).float()
+
+        return image, mask
+
+
+# ============================================================
+# 5) Losses (dice / bce / dice+bce / wft)
+#    forward(logits, targets, weight_map=None)
 # ============================================================
 class DiceLoss(nn.Module):
     def __init__(self, eps=1e-6):
@@ -524,7 +587,7 @@ def tol_f1(pred01: np.ndarray, gt01: np.ndarray, tol_px: int = 3, eps: float = 1
 
 
 # ============================================================
-# 7) Model (Method A): Expand SegFormer input conv to 4ch (no adapter)
+# 7) Model: SegFormer4Ch (CLIP mode) — first input conv patched to 4ch
 # ============================================================
 def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegmentation):
     """
@@ -600,6 +663,7 @@ def _replace_first_conv_in_segformer_to_4ch(seg_model: SegformerForSemanticSegme
 class SegFormer4Ch(nn.Module):
     """
     (B,4,H,W) -> SegFormer(first input conv patched to 4ch) -> logits
+    Used in CLIP-Heat mode (default).
     """
     def __init__(self, seg_model_name: str, local_models_base: str = "./models"):
         super().__init__()
@@ -630,9 +694,11 @@ class SegFormer4Ch(nn.Module):
 
 # ============================================================
 # 8) Eval helper (shared for Val/RealVal)
+#    Works for both modes: CLIP batches yield (x, band, wmap),
+#    baseline batches yield (imgs, masks) — wmap is None in baseline.
 # ============================================================
 @torch.no_grad()
-def run_eval(model, loader, criterion, args, device, name="Val"):
+def run_eval(model, loader, criterion, args, device, name="Val", use_clip=True):
     model.eval()
     total_loss = 0.0
 
@@ -641,20 +707,30 @@ def run_eval(model, loader, criterion, args, device, name="Val"):
     count = 0
 
     pbar = tqdm(loader, desc=f"Epoch [Eval {name}]", leave=False)
-    for x4, band, wmap in pbar:
-        x4 = x4.to(device, non_blocking=True)
-        band = band.to(device, non_blocking=True)
-        wmap = wmap.to(device, non_blocking=True)
+    for batch in pbar:
+        if use_clip:
+            x, band, wmap = batch
+            x = x.to(device, non_blocking=True)
+            band = band.to(device, non_blocking=True)
+            wmap = wmap.to(device, non_blocking=True)
+            logits = model(x)
+            logits = F.interpolate(logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
+            loss = criterion(logits, band, wmap)
+            gt_band = band
+        else:
+            imgs, masks = batch
+            imgs = imgs.to(device, non_blocking=True)
+            masks = masks.to(device, non_blocking=True)
+            outputs = model(pixel_values=imgs)
+            logits = F.interpolate(outputs.logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
+            loss = criterion(logits, masks)
+            gt_band = masks
 
-        logits = model(x4)
-        logits = F.interpolate(logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
-
-        loss = criterion(logits, band, wmap)
         total_loss += loss.item()
 
         prob = torch.sigmoid(logits).detach().cpu().numpy()
         pred_np = (prob > args.thr).astype(np.uint8)
-        gt_np = (band.detach().cpu().numpy() > 0.5).astype(np.uint8)
+        gt_np = (gt_band.detach().cpu().numpy() > 0.5).astype(np.uint8)
 
         B = pred_np.shape[0]
         for b in range(B):
@@ -682,9 +758,11 @@ def run_eval(model, loader, criterion, args, device, name="Val"):
 
 
 # ============================================================
-# 9) Train (with TensorBoard) + RealVal evaluation + RealVal best checkpoint saving
+# 9) Train (with TensorBoard) + RealVal evaluation + checkpoint saving
 # ============================================================
 def train(args):
+    use_clip = not args.no_clip
+
     device = "cuda" if (torch.cuda.is_available() and not args.cpu) else "cpu"
     run_id = datetime.now().strftime(f"{args.run_name}_%Y%m%d_%H%M%S")
     save_dir = os.path.join(args.out_dir, run_id)
@@ -695,54 +773,26 @@ def train(args):
     writer = SummaryWriter(log_dir=tb_dir)
     print(f"📈 TensorBoard logdir: {tb_dir}")
 
-    clip_prompts = [p.strip() for p in args.clip_prompts.split(",") if p.strip()]
-
     print(f"Training start: {save_dir}")
     print(f"Device: {device}")
+    print(f"Mode: {'CLIP-Heat (4ch)' if use_clip else 'Baseline RGB (3ch)'}")
     print(f"DATA_ROOT={args.data_root}")
     print(f"SegFormer={args.model_name} | IMG={args.img_size} | BS={args.batch_size} | LR={args.lr} | EP={args.epochs}")
-    print(f"CLIP={args.clip_model} | grid={args.clip_grid} | clip_device={args.clip_device}")
-    print(f"Prompts={clip_prompts}")
     print(f"BAND={args.band_width_px} | W_MAX={args.max_weight} | W_SIGMA={args.weight_sigma}")
     print(f"LOSS={args.loss} (dicebce: dice_w={args.dice_w}, bce_w={args.bce_w})")
     print(f"VAL metrics: IoU/Dice/Precision/Recall/F1/HD95/HD/ASSD/TolF1 (thr={args.thr}, tol_px={args.tol_px})")
-    if args.clip_device == "cuda" and args.num_workers > 0:
-        print("⚠️ WARNING: clip_device=cuda with num_workers>0 can crash. Use --num_workers 0 for safety.")
 
-    # dataset
-    train_ds = FireLineClipDataset(
-        args.data_root, "train",
-        img_size=args.img_size,
-        band_width_px=args.band_width_px,
-        max_weight=args.max_weight,
-        weight_sigma=args.weight_sigma,
-        clip_model_name=args.clip_model,
-        clip_prompts=clip_prompts,
-        clip_grid=args.clip_grid,
-        clip_cache_dir=args.clip_cache_dir,
-        clip_device=args.clip_device,
-        local_models_base=args.local_models_base,
-    )
-    val_ds = FireLineClipDataset(
-        args.data_root, "val",
-        img_size=args.img_size,
-        band_width_px=args.band_width_px,
-        max_weight=args.max_weight,
-        weight_sigma=args.weight_sigma,
-        clip_model_name=args.clip_model,
-        clip_prompts=clip_prompts,
-        clip_grid=args.clip_grid,
-        clip_cache_dir=args.clip_cache_dir,
-        clip_device=args.clip_device,
-        local_models_base=args.local_models_base,
-    )
+    if use_clip:
+        clip_prompts = [p.strip() for p in args.clip_prompts.split(",") if p.strip()]
+        print(f"CLIP={args.clip_model} | grid={args.clip_grid} | clip_device={args.clip_device}")
+        print(f"Prompts={clip_prompts}")
+        if args.clip_device == "cuda" and args.num_workers > 0:
+            print("⚠️ WARNING: clip_device=cuda with num_workers>0 can crash. Use --num_workers 0 for safety.")
 
-    # real_val (optional)
-    real_val_raw = os.path.join(args.data_root, "real_val", "raw")
-    real_val_ds = None
-    if os.path.exists(real_val_raw):
-        real_val_ds = FireLineClipDataset(
-            args.data_root, "real_val",
+    # ---- Build datasets ----
+    if use_clip:
+        train_ds = FireLineClipDataset(
+            args.data_root, "train",
             img_size=args.img_size,
             band_width_px=args.band_width_px,
             max_weight=args.max_weight,
@@ -754,8 +804,47 @@ def train(args):
             clip_device=args.clip_device,
             local_models_base=args.local_models_base,
         )
-        if len(real_val_ds) == 0:
-            real_val_ds = None
+        val_ds = FireLineClipDataset(
+            args.data_root, "val",
+            img_size=args.img_size,
+            band_width_px=args.band_width_px,
+            max_weight=args.max_weight,
+            weight_sigma=args.weight_sigma,
+            clip_model_name=args.clip_model,
+            clip_prompts=clip_prompts,
+            clip_grid=args.clip_grid,
+            clip_cache_dir=args.clip_cache_dir,
+            clip_device=args.clip_device,
+            local_models_base=args.local_models_base,
+        )
+        real_val_raw = os.path.join(args.data_root, "real_val", "raw")
+        real_val_ds = None
+        if os.path.exists(real_val_raw):
+            real_val_ds = FireLineClipDataset(
+                args.data_root, "real_val",
+                img_size=args.img_size,
+                band_width_px=args.band_width_px,
+                max_weight=args.max_weight,
+                weight_sigma=args.weight_sigma,
+                clip_model_name=args.clip_model,
+                clip_prompts=clip_prompts,
+                clip_grid=args.clip_grid,
+                clip_cache_dir=args.clip_cache_dir,
+                clip_device=args.clip_device,
+                local_models_base=args.local_models_base,
+            )
+            if len(real_val_ds) == 0:
+                real_val_ds = None
+    else:
+        tfm = get_rgb_transforms(args.img_size)
+        train_ds = FireLineDataset(args.data_root, split="train", transform=tfm)
+        val_ds   = FireLineDataset(args.data_root, split="val",   transform=tfm)
+        real_val_raw = os.path.join(args.data_root, "real_val", "raw")
+        real_val_ds = None
+        if os.path.exists(real_val_raw):
+            real_val_ds = FireLineDataset(args.data_root, split="real_val", transform=tfm)
+            if len(real_val_ds) == 0:
+                real_val_ds = None
 
     if len(train_ds) == 0:
         print("❌ No training data found.")
@@ -781,16 +870,33 @@ def train(args):
     else:
         print("ℹ️ real_val not found or empty -> skip real_val evaluation.")
 
-    # model (Method A)
-    model = SegFormer4Ch(args.model_name, local_models_base=args.local_models_base).to(device)
+    # ---- Build model ----
+    if use_clip:
+        model = SegFormer4Ch(args.model_name, local_models_base=args.local_models_base).to(device)
+    else:
+        seg_path_or_id, seg_is_local, seg_use_safetensors, _ = resolve_local_first(
+            args.model_name, base_dir=args.local_models_base
+        )
+        seg_kwargs = dict(
+            num_labels=1,
+            ignore_mismatched_sizes=True,
+            local_files_only=seg_is_local
+        )
+        if seg_is_local and (seg_use_safetensors is not None):
+            seg_kwargs["use_safetensors"] = seg_use_safetensors
+        model = SegformerForSemanticSegmentation.from_pretrained(
+            seg_path_or_id, **seg_kwargs
+        ).to(device)
+
     criterion = build_criterion(args).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    # ---- save meta ----
+    # ---- Save meta ----
     meta = {
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "device": device,
+        "use_clip": use_clip,
         "data_root": args.data_root,
         "img_size": args.img_size,
         "batch_size": args.batch_size,
@@ -798,11 +904,6 @@ def train(args):
         "lr": args.lr,
         "num_workers": args.num_workers,
         "model_name": args.model_name,
-        "clip_model": args.clip_model,
-        "clip_grid": args.clip_grid,
-        "clip_device": args.clip_device,
-        "clip_prompts": clip_prompts,
-        "clip_cache_dir": args.clip_cache_dir,
         "band_width_px": args.band_width_px,
         "max_weight": args.max_weight,
         "weight_sigma": args.weight_sigma,
@@ -816,16 +917,24 @@ def train(args):
         },
         "local_models_base": args.local_models_base,
         "notes": {
-            "input_channels": 4,
-            "adapter": "None (SegFormer first conv patched 3->4; RGB weights copied; heat weights init=0)",
-            "target": "band mask",
-            "weight_map": "distance-based",
             "thr_for_metrics": args.thr,
             "tol_px_for_TolF1": args.tol_px,
             "val_metrics": ["IoU", "Dice", "Precision", "Recall", "F1", "HD95", "HD", "ASSD", "TolF1"],
             "extra_validation": ["real_val"] if real_val_loader is not None else []
         }
     }
+
+    if use_clip:
+        meta["clip_model"] = args.clip_model
+        meta["clip_grid"] = args.clip_grid
+        meta["clip_device"] = args.clip_device
+        meta["clip_prompts"] = clip_prompts
+        meta["clip_cache_dir"] = args.clip_cache_dir
+        meta["notes"]["input_channels"] = 4
+        meta["notes"]["adapter"] = "None (SegFormer first conv patched 3->4; RGB weights copied; heat weights init=0)"
+    else:
+        meta["notes"]["input_channels"] = 3
+        meta["notes"]["adapter"] = "None (standard 3ch SegFormer)"
 
     meta_path = os.path.join(save_dir, "train_meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -840,26 +949,43 @@ def train(args):
 
     global_step = 0
     for epoch in range(args.epochs):
-        # ---- train ----
+        # ---- Train ----
         model.train()
         t_loss = 0.0
         t_dice = 0.0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} [Train]", leave=False)
-        for x4, band, wmap in pbar:
-            x4 = x4.to(device, non_blocking=True)
-            band = band.to(device, non_blocking=True)
-            wmap = wmap.to(device, non_blocking=True)
+        for batch in pbar:
+            if use_clip:
+                x, band, wmap = batch
+                x = x.to(device, non_blocking=True)
+                band = band.to(device, non_blocking=True)
+                wmap = wmap.to(device, non_blocking=True)
 
-            optimizer.zero_grad(set_to_none=True)
-            logits = model(x4)
-            logits = F.interpolate(logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
+                optimizer.zero_grad(set_to_none=True)
+                logits = model(x)
+                logits = F.interpolate(logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
 
-            loss = criterion(logits, band, wmap)
-            loss.backward()
-            optimizer.step()
+                loss = criterion(logits, band, wmap)
+                loss.backward()
+                optimizer.step()
 
-            d = dice_score_from_logits(logits.detach(), band, thr=args.thr)
+                d = dice_score_from_logits(logits.detach(), band, thr=args.thr)
+            else:
+                imgs, masks = batch
+                imgs = imgs.to(device, non_blocking=True)
+                masks = masks.to(device, non_blocking=True)
+
+                optimizer.zero_grad(set_to_none=True)
+                outputs = model(pixel_values=imgs)
+                logits = F.interpolate(outputs.logits, size=(args.img_size, args.img_size), mode="bilinear", align_corners=False)
+
+                loss = criterion(logits, masks)
+                loss.backward()
+                optimizer.step()
+
+                d = dice_score_from_logits(logits.detach(), masks, thr=args.thr)
+
             t_loss += loss.item()
             t_dice += d
 
@@ -873,11 +999,11 @@ def train(args):
         t_dice /= max(1, len(train_loader))
 
         # ---- val + real_val eval ----
-        v_loss, v_metrics = run_eval(model, val_loader, criterion, args, device, name="Val")
+        v_loss, v_metrics = run_eval(model, val_loader, criterion, args, device, name="Val", use_clip=use_clip)
 
         rv_loss, rv_metrics = None, None
         if real_val_loader is not None:
-            rv_loss, rv_metrics = run_eval(model, real_val_loader, criterion, args, device, name="RealVal")
+            rv_loss, rv_metrics = run_eval(model, real_val_loader, criterion, args, device, name="RealVal", use_clip=use_clip)
 
         # ---- TensorBoard epoch logging ----
         writer.add_scalar("loss/train", t_loss, epoch + 1)
@@ -915,7 +1041,7 @@ def train(args):
         # save epoch checkpoint
         torch.save(model.state_dict(), os.path.join(save_dir, f"model_epoch_{epoch+1}.pth"))
 
-        # best (val) ----
+        # best (val)
         if v_loss < best_val:
             best_val = v_loss
             torch.save(model.state_dict(), best_path)
@@ -930,7 +1056,7 @@ def train(args):
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
 
-        # best (real_val) ----
+        # best (real_val)
         if rv_loss is not None and rv_loss < best_real:
             best_real = rv_loss
             torch.save(model.state_dict(), real_best_path)
@@ -969,7 +1095,7 @@ def train(args):
 # ============================================================
 def build_parser():
     p = argparse.ArgumentParser(
-        "Train SegFormer with CLIP heatmap extra channel (RGB+1) + TensorBoard + extra metrics + multi-loss"
+        "Train SegFormer — CLIP-Heat 4ch (default) or Baseline RGB 3ch (--no-clip)"
     )
 
     p.add_argument("--data_root", type=str, required=True,
@@ -988,7 +1114,7 @@ def build_parser():
     p.add_argument("--max_weight", type=float, default=1.0)
     p.add_argument("--weight_sigma", type=float, default=1.0)
 
-    # ✅ loss selection
+    # loss selection
     p.add_argument("--loss", type=str, default="wft",
                    choices=["wft", "dice", "bce", "dicebce"],
                    help="Loss: wft | dice | bce | dicebce")
@@ -1002,12 +1128,16 @@ def build_parser():
     p.add_argument("--dice_w", type=float, default=1.0)
     p.add_argument("--bce_w", type=float, default=1.0)
 
-    # clip
+    # CLIP args (ignored when --no-clip)
     p.add_argument("--clip_model", type=str, default="openai/clip-vit-base-patch32")
     p.add_argument("--clip_prompts", type=str, default="fire,flames,wildfire,burning")
     p.add_argument("--clip_grid", type=int, default=16)
     p.add_argument("--clip_cache_dir", type=str, default="./clip_cache")
     p.add_argument("--clip_device", type=str, default="cpu", choices=["cpu", "cuda"])
+
+    # mode switch
+    p.add_argument("--no-clip", dest="no_clip", action="store_true",
+                   help="Disable CLIP-Heat and train a standard 3ch RGB SegFormer (baseline mode)")
 
     # threshold & tol
     p.add_argument("--thr", type=float, default=0.5, help="threshold for val binarization metrics")
