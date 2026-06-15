@@ -16,9 +16,15 @@ outputs/*/
 Inference_Result/
 evaluate/
 
-# Dataset (not included — see README for download instructions)
-Dataset/
-data/*/
+# Dataset (image files not tracked — structure and README are)
+Dataset/**/*.png
+Dataset/**/*.jpg
+Dataset/**/*.jpeg
+Dataset/**/*.bmp
+Dataset/**/*.tif
+Dataset/**/*.tiff
+!Dataset/README.md
+!Dataset/**/.gitkeep
 
 # Python
 __pycache__/
