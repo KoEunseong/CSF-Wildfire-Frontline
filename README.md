@@ -54,17 +54,15 @@ snapshot_download(
 
 ```
 Dataset/
-├── sim/            # Simulation-generated data
+├── checkpoints/
+│   └── real_best_fireline_model.pth   # pretrained checkpoint
+├── synthetic/                          # Simulation-generated data
 │   ├── train/
-│   │   ├── raw/    # RGB images  (e.g., Wildfire_0000_Raw.png)
-│   │   └── gt/     # GT masks    (e.g., Wildfire_0000_Line.png)
-│   ├── val/
-│   │   ├── raw/
-│   │   └── gt/
+│   │   └── gt/     # GT masks  (e.g., Wildfire_0000_Line.png)
 │   └── test/
-│       ├── raw/
-│       └── gt/
-└── real/           # Real UAV imagery
+│       ├── raw/    # RGB images (e.g., Wildfire_0000_Raw.png)
+│       └── gt/     # GT masks
+└── real/                               # Real UAV imagery
     ├── raw/
     └── gt/
 ```
@@ -93,13 +91,13 @@ models/
 ```bash
 # CLIP-Heat (default — 4ch SegFormer + CLIP heatmap)
 python train.py \
-    --data_root ./Dataset/sim \
+    --data_root ./Dataset/synthetic \
     --model_name nvidia/mit-b3 \
     --clip_model openai/clip-vit-base-patch32
 
 # Baseline (RGB only — standard 3ch SegFormer)
 python train.py --no-clip \
-    --data_root ./Dataset/sim \
+    --data_root ./Dataset/synthetic \
     --model_name nvidia/mit-b3
 ```
 
@@ -113,12 +111,14 @@ Training checkpoints and `train_meta.json` are saved to `./train_runs/<run_id>/`
 # CLIP-Heat (default — 4ch model + CLIP heatmap)
 python inference.py \
     --data-root ./Dataset/real \
-    --model-path ./train_runs/<run_id>/best_fireline_model.pth
+    --model-path ./Dataset/checkpoints/real_best_fireline_model.pth \
+    --model-name nvidia/mit-b3
 
 # Baseline (RGB only — standard 3ch model)
 python inference.py --no-clip \
     --data-root ./Dataset/real \
-    --model-path ./train_runs/<run_id>/best_fireline_model.pth
+    --model-path ./train_runs/<run_id>/best_fireline_model.pth \
+    --model-name nvidia/mit-b3
 ```
 
 If `train_meta.json` is found next to the checkpoint and contains `"use_clip": false`,  
@@ -144,8 +144,8 @@ Metrics: IoU, Dice, Precision, Recall, F1, Chamfer, HD95, TolF1.
 
 ```bash
 python overlay.py \
-    --raw-dir ./Dataset/sim/train/raw \
-    --gt-dir ./Dataset/sim/train/gt \
+    --raw-dir ./Dataset/synthetic/test/raw \
+    --gt-dir ./Dataset/synthetic/test/gt \
     --out-dir ./outputs/overlay_gt
 ```
 

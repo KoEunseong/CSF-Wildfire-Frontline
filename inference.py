@@ -26,6 +26,7 @@ MODEL_PATH = ""  # Path to trained model .pth checkpoint (set via --model-path)
 
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 SAVE_DIR = os.path.join("./Inference_Result", f"Run_{current_time}")
+_OVERRIDE_MODEL_NAME = None  # set via --model-name CLI arg
 
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -554,7 +555,7 @@ def run_inference(use_clip: bool):
     global IMG_SIZE
     meta = load_meta_if_exists(MODEL_PATH)
 
-    base_model_name = meta.get("model_name", "nvidia/mit-b1")
+    base_model_name = _OVERRIDE_MODEL_NAME or meta.get("model_name", "nvidia/mit-b1")
     IMG_SIZE = int(meta.get("img_size", IMG_SIZE))
     local_models_base = meta.get("local_models_base", "./models")
 
@@ -1021,6 +1022,8 @@ if __name__ == "__main__":
                         help="Tolerance radius in pixels (default: %(default)s)")
     parser.add_argument("--model-dir", default="./models",
                         help="Local HuggingFace model cache dir (default: %(default)s)")
+    parser.add_argument("--model-name", default=None,
+                        help="SegFormer backbone (e.g. nvidia/mit-b3). Overrides train_meta.json.")
     parser.add_argument("--no-clip", dest="no_clip", action="store_true",
                         help="Disable CLIP-Heat and run standard 3ch RGB SegFormer (baseline mode)")
     args = parser.parse_args()
@@ -1031,6 +1034,9 @@ if __name__ == "__main__":
     TOL_PX = args.tol_px
     if args.save_dir:
         SAVE_DIR = args.save_dir
+
+    if args.model_name:
+        _OVERRIDE_MODEL_NAME = args.model_name
 
     # Auto-detect use_clip from train_meta.json if available
     use_clip = not args.no_clip
